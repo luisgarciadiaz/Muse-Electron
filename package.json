@@ -1,0 +1,66 @@
+{
+  "name": "muse-electron",
+  "version": "0.1.0",
+  "description": "Cross-platform Electron desktop client for Muse — the personal AI assistant by Meta",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "icons": "node scripts/generate-icons.mjs",
+    "copy:renderer": "node scripts/copy-renderer.mjs",
+    "compile": "tsc && node scripts/copy-renderer.mjs",
+    "typecheck": "tsc --noEmit",
+    "dev": "npm run compile && electron .",
+    "start": "npm run dev",
+    "smoke": "npm run compile && electron . --smoke-test",
+    "build": "npm run compile && electron-builder",
+    "build:win": "npm run compile && electron-builder --win",
+    "build:mac": "npm run compile && electron-builder --mac",
+    "build:linux": "npm run compile && electron-builder --linux"
+  },
+  "keywords": [
+    "electron",
+    "muse",
+    "muse.ai",
+    "meta",
+    "ai-assistant",
+    "desktop"
+  ],
+  "license": "MIT",
+  "build": {
+    "appId": "com.vectornetworks.muse-desktop",
+    "productName": "Muse Desktop",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "icon": "assets/icon.png"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png"
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "typescript": "^7.0.2"
+  }
+}
