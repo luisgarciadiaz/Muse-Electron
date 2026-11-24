@@ -1,5 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { app } from 'electron';
 
 export const APP_NAME = 'Muse Desktop';
 export const APP_ID = 'com.vectornetworks.muse-desktop';
@@ -19,6 +21,10 @@ const ALLOWED_AUTH_DOMAINS = [
 ];
 
 export function loadDotEnv(): void {
+  if (app.isPackaged) {
+    return;
+  }
+
   const candidates = [
     path.resolve(process.cwd(), '.env'),
     path.resolve(__dirname, '..', '..', '.env'),
@@ -65,7 +71,11 @@ export function getMuseUrl(): string {
   }
   try {
     const parsed = new URL(raw);
-    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+    const isLocalDevHttp =
+      !app.isPackaged &&
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+    if (parsed.protocol === 'https:' || isLocalDevHttp) {
       return parsed.toString();
     }
   } catch {
@@ -136,4 +146,20 @@ export function getAssetPath(...segments: string[]): string {
 
 export function getOfflinePagePath(): string {
   return path.resolve(__dirname, '..', 'renderer', 'offline.html');
+}
+
+export function isOfflinePageUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'file:') {
+      return false;
+    }
+    const expectedPath = pathToFileURL(getOfflinePagePath()).pathname;
+    if (process.platform === 'win32') {
+      return parsed.pathname.toLowerCase() === expectedPath.toLowerCase();
+    }
+    return parsed.pathname === expectedPath;
+  } catch {
+    return false;
+  }
 }

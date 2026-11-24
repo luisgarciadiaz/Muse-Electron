@@ -12,4 +12,6 @@ const api: MuseDesktopApi = {
   getAppInfo: () => ipcRenderer.invoke('muse:get-app-info'),
 };
 
-contextBridge.exposeInMainWorld('museDesktop', api);
+if (window.location.protocol === 'file:') {
+  contextBridge.exposeInMainWorld('museDesktop', api);
+}

@@ -3,6 +3,7 @@ import { pathToFileURL } from 'node:url';
 import {
   BrowserWindow,
   Menu,
+  type WebContents,
   clipboard,
   session,
   shell,
@@ -16,6 +17,7 @@ import {
   getOfflinePagePath,
   getSanitizedUserAgent,
   isAllowedInAppAuthUrl,
+  isOfflinePageUrl,
   isSafeExternalUrl,
   isTrustedMuseOrigin,
 } from './config';
@@ -64,6 +66,51 @@ export function toggleWindowVisibility(win: BrowserWindow): void {
   showAndFocusWindow(win);
 }
 
+export function attachWebContentsSecurityGuards(contents: WebContents): void {
+  const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+
+  contents.on('will-attach-webview', (event) => {
+    event.preventDefault();
+  });
+
+  // Allow Meta/Muse OAuth popups in-app; route all other links to default browser
+  contents.setWindowOpenHandler(({ url }) => {
+    if (isAllowedInAppAuthUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 700,
+          autoHideMenuBar: true,
+          backgroundColor: '#0f1117',
+          icon: getAssetPath(iconFile),
+          webPreferences: {
+            partition: SESSION_PARTITION,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+      };
+    }
+
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  contents.on('will-navigate', (event, url) => {
+    if (isOfflinePageUrl(url) || isAllowedInAppAuthUrl(url)) {
+      return;
+    }
+    event.preventDefault();
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url);
+    }
+  });
+}
+
 export function createMainWindow(
   store: SettingsStore,
   callbacks: WindowCallbacks,
@@ -73,10 +120,18 @@ export function createMainWindow(
   const sanitizedUa = getSanitizedUserAgent(museSession.getUserAgent());
   museSession.setUserAgent(sanitizedUa);
 
-  museSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const currentUrl = webContents.getURL();
-    const allowed = ALLOWED_PERMISSIONS.has(permission) && isTrustedMuseOrigin(currentUrl);
+  museSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
+    const securityOrigin =
+      'securityOrigin' in details && typeof details.securityOrigin === 'string'
+        ? details.securityOrigin
+        : '';
+    const originUrl = details.requestingUrl || securityOrigin;
+    const allowed = ALLOWED_PERMISSIONS.has(permission) && isTrustedMuseOrigin(originUrl);
     callback(allowed);
+  });
+
+  museSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) => {
+    return ALLOWED_PERMISSIONS.has(permission) && isTrustedMuseOrigin(requestingOrigin);
   });
 
   const savedBounds = store.get('windowBounds');
@@ -115,43 +170,6 @@ export function createMainWindow(
         win.maximize();
       }
       win.show();
-    }
-  });
-
-  // Allow Meta/Muse OAuth popups in-app; route all other links to default browser
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedInAppAuthUrl(url)) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 520,
-          height: 700,
-          autoHideMenuBar: true,
-          backgroundColor: '#0f1117',
-          icon: getAssetPath(iconFile),
-          webPreferences: {
-            partition: SESSION_PARTITION,
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-          },
-        },
-      };
-    }
-
-    if (isSafeExternalUrl(url)) {
-      void shell.openExternal(url);
-    }
-    return { action: 'deny' };
-  });
-
-  win.webContents.on('will-navigate', (event, url) => {
-    if (url.startsWith('file://') || isAllowedInAppAuthUrl(url)) {
-      return;
-    }
-    event.preventDefault();
-    if (isSafeExternalUrl(url)) {
-      void shell.openExternal(url);
     }
   });
 

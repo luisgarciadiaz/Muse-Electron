@@ -1,15 +1,37 @@
-import { type BrowserWindow, app, globalShortcut, ipcMain, shell } from 'electron';
-import { APP_ID, APP_NAME, getMuseUrl, isSafeExternalUrl, loadDotEnv } from './config';
+import {
+  type BrowserWindow,
+  type IpcMainInvokeEvent,
+  app,
+  globalShortcut,
+  ipcMain,
+  shell,
+} from 'electron';
+import {
+  APP_ID,
+  APP_NAME,
+  getMuseUrl,
+  isAllowedInAppAuthUrl,
+  isOfflinePageUrl,
+  isSafeExternalUrl,
+  loadDotEnv,
+} from './config';
 import { createAppMenu } from './menu';
 import { registerGlobalToggleShortcut } from './shortcuts';
 import { SettingsStore } from './store';
 import { createAppTray } from './tray';
 import {
+  attachWebContentsSecurityGuards,
   createMainWindow,
   loadMuseHome,
   showAndFocusWindow,
   toggleWindowVisibility,
 } from './window';
+
+function assertOfflineSender(event: IpcMainInvokeEvent): void {
+  if (!event.senderFrame || !isOfflinePageUrl(event.senderFrame.url)) {
+    throw new Error('Unauthorized IPC sender');
+  }
+}
 
 loadDotEnv();
 
@@ -25,6 +47,10 @@ if (!hasSingleInstanceLock) {
   if (process.platform === 'win32') {
     app.setAppUserModelId(APP_ID);
   }
+
+  app.on('web-contents-created', (_event, contents) => {
+    attachWebContentsSecurityGuards(contents);
+  });
 
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -71,24 +97,32 @@ if (!hasSingleInstanceLock) {
       isSmokeTest
     );
 
-    ipcMain.handle('muse:retry', () => {
+    ipcMain.handle('muse:retry', (event) => {
+      assertOfflineSender(event);
       if (mainWindow) {
         loadMuseHome(mainWindow);
       }
     });
 
-    ipcMain.handle('muse:open-external', (_event, targetUrl?: string) => {
-      const candidate = typeof targetUrl === 'string' && isSafeExternalUrl(targetUrl)
-        ? targetUrl
-        : getMuseUrl();
+    ipcMain.handle('muse:open-external', (event, targetUrl?: string) => {
+      assertOfflineSender(event);
+      const candidate =
+        typeof targetUrl === 'string' &&
+        isSafeExternalUrl(targetUrl) &&
+        isAllowedInAppAuthUrl(targetUrl)
+          ? targetUrl
+          : getMuseUrl();
       return shell.openExternal(candidate);
     });
 
-    ipcMain.handle('muse:get-app-info', () => ({
-      name: APP_NAME,
-      version: app.getVersion(),
-      museUrl: getMuseUrl(),
-    }));
+    ipcMain.handle('muse:get-app-info', (event) => {
+      assertOfflineSender(event);
+      return {
+        name: APP_NAME,
+        version: app.getVersion(),
+        museUrl: getMuseUrl(),
+      };
+    });
 
     const trayController = createAppTray(mainWindow, store, {
       onStateChange: syncState,
