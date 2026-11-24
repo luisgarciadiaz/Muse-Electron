@@ -10,9 +10,9 @@ import {
   APP_ID,
   APP_NAME,
   getMuseUrl,
-  isAllowedInAppAuthUrl,
   isOfflinePageUrl,
   isSafeExternalUrl,
+  isTrustedMuseOrigin,
   loadDotEnv,
 } from './config';
 import { createAppMenu } from './menu';
@@ -27,8 +27,13 @@ import {
   toggleWindowVisibility,
 } from './window';
 
-function assertOfflineSender(event: IpcMainInvokeEvent): void {
-  if (!event.senderFrame || !isOfflinePageUrl(event.senderFrame.url)) {
+function assertOfflineSender(event: IpcMainInvokeEvent, mainWin: BrowserWindow | null): void {
+  if (
+    !mainWin ||
+    mainWin.isDestroyed() ||
+    event.senderFrame !== mainWin.webContents.mainFrame ||
+    !isOfflinePageUrl(event.senderFrame.url)
+  ) {
     throw new Error('Unauthorized IPC sender');
   }
 }
@@ -98,25 +103,25 @@ if (!hasSingleInstanceLock) {
     );
 
     ipcMain.handle('muse:retry', (event) => {
-      assertOfflineSender(event);
+      assertOfflineSender(event, mainWindow);
       if (mainWindow) {
         loadMuseHome(mainWindow);
       }
     });
 
     ipcMain.handle('muse:open-external', (event, targetUrl?: string) => {
-      assertOfflineSender(event);
+      assertOfflineSender(event, mainWindow);
       const candidate =
         typeof targetUrl === 'string' &&
         isSafeExternalUrl(targetUrl) &&
-        isAllowedInAppAuthUrl(targetUrl)
+        isTrustedMuseOrigin(targetUrl)
           ? targetUrl
           : getMuseUrl();
       return shell.openExternal(candidate);
     });
 
     ipcMain.handle('muse:get-app-info', (event) => {
-      assertOfflineSender(event);
+      assertOfflineSender(event, mainWindow);
       return {
         name: APP_NAME,
         version: app.getVersion(),

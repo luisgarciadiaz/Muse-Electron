@@ -16,7 +16,7 @@ import {
   getMuseUrl,
   getOfflinePagePath,
   getSanitizedUserAgent,
-  isAllowedInAppAuthUrl,
+  isAllowedAuthPopupUrl,
   isOfflinePageUrl,
   isSafeExternalUrl,
   isTrustedMuseOrigin,
@@ -66,34 +66,58 @@ export function toggleWindowVisibility(win: BrowserWindow): void {
   showAndFocusWindow(win);
 }
 
+let creatingMainWindow = false;
+
 export function attachWebContentsSecurityGuards(contents: WebContents): void {
+  const isMain = creatingMainWindow;
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
 
   contents.on('will-attach-webview', (event) => {
     event.preventDefault();
   });
 
-  // Allow Meta/Muse OAuth popups in-app; route all other links to default browser
-  contents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedInAppAuthUrl(url)) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          width: 520,
-          height: 700,
-          autoHideMenuBar: true,
-          backgroundColor: '#0f1117',
-          icon: getAssetPath(iconFile),
-          webPreferences: {
-            partition: SESSION_PARTITION,
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
+  if (isMain) {
+    // Allow Meta/Muse OAuth popups in-app; route all other links to default browser
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedAuthPopupUrl(url)) {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            width: 520,
+            height: 700,
+            autoHideMenuBar: true,
+            backgroundColor: '#0f1117',
+            icon: getAssetPath(iconFile),
+            webPreferences: {
+              partition: SESSION_PARTITION,
+              contextIsolation: true,
+              nodeIntegration: false,
+              sandbox: true,
+            },
           },
-        },
-      };
-    }
+        };
+      }
 
+      if (isSafeExternalUrl(url)) {
+        void shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
+
+    contents.on('will-navigate', (event, url) => {
+      if (isOfflinePageUrl(url) || isTrustedMuseOrigin(url)) {
+        return;
+      }
+      event.preventDefault();
+      if (isSafeExternalUrl(url)) {
+        void shell.openExternal(url);
+      }
+    });
+    return;
+  }
+
+  // Secondary/popup windows (OAuth): restrict navigation to auth endpoints & Muse, deny nested popups
+  contents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) {
       void shell.openExternal(url);
     }
@@ -101,7 +125,7 @@ export function attachWebContentsSecurityGuards(contents: WebContents): void {
   });
 
   contents.on('will-navigate', (event, url) => {
-    if (isOfflinePageUrl(url) || isAllowedInAppAuthUrl(url)) {
+    if (isAllowedAuthPopupUrl(url) || isTrustedMuseOrigin(url)) {
       return;
     }
     event.preventDefault();
@@ -139,27 +163,33 @@ export function createMainWindow(
 
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png';
 
-  const win = new BrowserWindow({
-    x: safeBounds.x,
-    y: safeBounds.y,
-    width: safeBounds.width,
-    height: safeBounds.height,
-    minWidth: 480,
-    minHeight: 400,
-    title: APP_NAME,
-    icon: getAssetPath(iconFile),
-    backgroundColor: '#0f1117',
-    show: false,
-    alwaysOnTop: store.get('alwaysOnTop'),
-    webPreferences: {
-      preload: path.join(__dirname, '..', 'preload', 'index.js'),
-      partition: SESSION_PARTITION,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-    },
-  });
+  let win: BrowserWindow;
+  creatingMainWindow = true;
+  try {
+    win = new BrowserWindow({
+      x: safeBounds.x,
+      y: safeBounds.y,
+      width: safeBounds.width,
+      height: safeBounds.height,
+      minWidth: 480,
+      minHeight: 400,
+      title: APP_NAME,
+      icon: getAssetPath(iconFile),
+      backgroundColor: '#0f1117',
+      show: false,
+      alwaysOnTop: store.get('alwaysOnTop'),
+      webPreferences: {
+        preload: path.join(__dirname, '..', 'preload', 'index.js'),
+        partition: SESSION_PARTITION,
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        spellcheck: true,
+      },
+    });
+  } finally {
+    creatingMainWindow = false;
+  }
 
   win.webContents.setUserAgent(sanitizedUa);
 

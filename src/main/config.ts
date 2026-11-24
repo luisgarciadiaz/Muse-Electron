@@ -10,15 +10,34 @@ export const SESSION_PARTITION = 'persist:muse';
 export const DEFAULT_SHORTCUT = 'Alt+Space';
 export const FALLBACK_SHORTCUT = 'CommandOrControl+Shift+M';
 
-const ALLOWED_AUTH_DOMAINS = [
-  'muse.ai',
-  'meta.com',
-  'meta.ai',
+const DEDICATED_AUTH_HOSTS = new Set([
+  'auth.meta.com',
+  'accountscenter.meta.com',
+  'auth.muse.ai',
+]);
+
+const SHARED_AUTH_HOSTS = new Set([
   'facebook.com',
-  'fb.com',
-  'instagram.com',
-  'whatsapp.com',
+  'www.facebook.com',
+  'm.facebook.com',
+  'www.meta.com',
+  'www.instagram.com',
+]);
+
+const SHARED_AUTH_PATH_PREFIXES = [
+  '/login',
+  '/dialog/oauth',
+  '/oauth',
+  '/checkpoint',
+  '/two_step_verification',
+  '/accounts/login',
+  '/consent',
+  '/privacy/consent',
+  '/auth/',
 ];
+
+const VERSIONED_OAUTH_PATH_RE = /^\/v\d+(?:\.\d+)?\/dialog\/oauth(?:\/|$)/;
+const ENV_KEY_ALLOWLIST_RE = /^MUSE_[A-Z0-9_]+$/;
 
 export function loadDotEnv(): void {
   if (app.isPackaged) {
@@ -53,7 +72,7 @@ export function loadDotEnv(): void {
         ) {
           value = value.slice(1, -1);
         }
-        if (key && process.env[key] === undefined) {
+        if (key && ENV_KEY_ALLOWLIST_RE.test(key) && process.env[key] === undefined) {
           process.env[key] = value;
         }
       }
@@ -65,6 +84,10 @@ export function loadDotEnv(): void {
 }
 
 export function getMuseUrl(): string {
+  if (app.isPackaged) {
+    return DEFAULT_MUSE_URL;
+  }
+
   const raw = process.env.MUSE_APP_URL?.trim();
   if (!raw) {
     return DEFAULT_MUSE_URL;
@@ -72,7 +95,6 @@ export function getMuseUrl(): string {
   try {
     const parsed = new URL(raw);
     const isLocalDevHttp =
-      !app.isPackaged &&
       parsed.protocol === 'http:' &&
       (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
     if (parsed.protocol === 'https:' || isLocalDevHttp) {
@@ -107,16 +129,31 @@ export function isTrustedMuseOrigin(rawUrl: string): boolean {
   }
 }
 
-export function isAllowedInAppAuthUrl(rawUrl: string): boolean {
+export function isAllowedAuthPopupUrl(rawUrl: string): boolean {
+  if (isTrustedMuseOrigin(rawUrl)) {
+    return true;
+  }
+
   try {
     const parsed = new URL(rawUrl);
-    if (parsed.origin === new URL(getMuseUrl()).origin) {
-      return true;
-    }
-    if (parsed.protocol !== 'https:') {
+    if (parsed.protocol !== 'https:' || parsed.username !== '' || parsed.password !== '') {
       return false;
     }
-    return ALLOWED_AUTH_DOMAINS.some((domain) => matchesDomain(parsed.hostname, domain));
+
+    const host = parsed.hostname.toLowerCase();
+    if (DEDICATED_AUTH_HOSTS.has(host)) {
+      return true;
+    }
+
+    if (SHARED_AUTH_HOSTS.has(host)) {
+      const pathName = parsed.pathname;
+      return (
+        SHARED_AUTH_PATH_PREFIXES.some((prefix) => pathName.startsWith(prefix)) ||
+        VERSIONED_OAUTH_PATH_RE.test(pathName)
+      );
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -148,17 +185,27 @@ export function getOfflinePagePath(): string {
   return path.resolve(__dirname, '..', 'renderer', 'offline.html');
 }
 
+const CANONICAL_OFFLINE_URL = pathToFileURL(getOfflinePagePath()).href;
+
 export function isOfflinePageUrl(rawUrl: string): boolean {
   try {
     const parsed = new URL(rawUrl);
-    if (parsed.protocol !== 'file:') {
+    if (
+      parsed.protocol !== 'file:' ||
+      parsed.host !== '' ||
+      parsed.hostname !== '' ||
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      parsed.port !== ''
+    ) {
       return false;
     }
-    const expectedPath = pathToFileURL(getOfflinePagePath()).pathname;
+    parsed.search = '';
+    parsed.hash = '';
     if (process.platform === 'win32') {
-      return parsed.pathname.toLowerCase() === expectedPath.toLowerCase();
+      return parsed.href.toLowerCase() === CANONICAL_OFFLINE_URL.toLowerCase();
     }
-    return parsed.pathname === expectedPath;
+    return parsed.href === CANONICAL_OFFLINE_URL;
   } catch {
     return false;
   }
